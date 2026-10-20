@@ -2,6 +2,8 @@ import requests
 import os
 import re
 import tarfile
+import shutil
+from itertools import chain
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -38,7 +40,9 @@ class CARDAnalysis:
 
         self.genes_list = genes_list
         self.ARG_list, self.not_ARG_list = self.finding_ARG(self.genes_list, "aro.obo")
-        self.ARGdf = pd.DataFrame(self.ARG_list)
+        self.ARGdf = pd.DataFrame(self.ARG_list).reindex(columns=[
+            "Gene Name", "Matched Name", "Gene ID", "Description", "Antibiotics", "All Synonyms"
+        ])
 
     def download_CARD_file(self) -> None:
         """
@@ -48,7 +52,7 @@ class CARDAnalysis:
         zip_filename = "card-data.tar.bz2"
         obo_filename = "aro.obo"
 
-        response = requests.get(CARD_URL, stream=True)
+        response = requests.get(CARD_URL, stream=True, timeout=30)
 
         if response.status_code != 200:
             raise ConnectionError(f"Failed to download CARD data (status code {response.status_code})")
@@ -60,10 +64,12 @@ class CARDAnalysis:
 
         with tarfile.open(zip_filename, "r:bz2") as tar:
             for member in tar.getmembers():
-                if obo_filename in member.name:
-                    tar.extract(member, path=".")
-                    print(f"Download and extraction complete: {member.name}")
+                if member.isfile() and os.path.basename(member.name) == obo_filename:
+                    with tar.extractfile(member) as source, open(obo_filename, "wb") as target:
+                        shutil.copyfileobj(source, target)
                     break
+            else:
+                raise FileNotFoundError("The CARD archive does not contain aro.obo.")
 
         os.remove(zip_filename)
 
@@ -74,63 +80,50 @@ class CARDAnalysis:
         if not os.path.exists(obo_file):
             raise FileNotFoundError(f"File not found: {obo_file}")
 
-        with open(obo_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
         current_id = None
         current_name = None
         current_description = None
         current_antibiotics = []
         current_synonyms = []
-        gene_occurrences = []
+        in_term = False
 
-        for line in lines:
-            line = line.strip()
-
-            if line.startswith("id: ARO:"):
-                current_id = line.split(": ")[1]
-
-            elif line.startswith("name: "):
-                current_name = line.split(": ", 1)[1]
-                current_synonyms = []
-
-
-            elif line.startswith("synonym: "):
-                match = re.search(r'^synonym: "([^"]+)"', line)
-                if match:
-                    synonyms_split = [s.strip() for s in match.group(1).split(",")]
-                    current_synonyms.extend(synonyms_split)
-
-            elif line.startswith("def: "):
-                current_description = line.split(": ", 1)[1] if ": " in line else ""
-
-            elif line.startswith("relationship: confers_resistance_to_antibiotic"):
-                antibiotic = line.split(": ")[1].split("! ")[-1]
-                current_antibiotics.append(antibiotic)
-
-            elif line == "[Term]" and current_name:
-                all_names = [current_name] + current_synonyms
-
-                for name in all_names:
-                    if gene_name.lower() == name.lower():
-                        gene_occurrences.append({
-                            "Gene Name": current_name,
-                            "Matched Name": name,
-                            "Gene ID": current_id,
-                            "Description": current_description or " ",
-                            "Antibiotics": ", ".join(current_antibiotics) if current_antibiotics else pd.NA,
-                            "All Synonyms": ", ".join(current_synonyms) if current_synonyms else pd.NA
-                        })
-                        break
-
-                # Reset
-                current_id = None
-                current_name = None
-                current_description = None
-                current_antibiotics = []
-                current_synonyms = []
-
-        return gene_occurrences[0] if gene_occurrences else None
+        with open(obo_file, "r", encoding="utf-8") as f:
+            # A final boundary also processes the last term at end-of-file.
+            for raw_line in chain(f, ["[End]"]):
+                line = raw_line.strip()
+                if line.startswith("[") and line.endswith("]"):
+                    if in_term and current_name:
+                        for name in [current_name] + current_synonyms:
+                            if gene_name.strip().casefold() == name.casefold():
+                                return {
+                                    "Gene Name": current_name,
+                                    "Matched Name": name,
+                                    "Gene ID": current_id,
+                                    "Description": current_description or " ",
+                                    "Antibiotics": ", ".join(current_antibiotics) if current_antibiotics else pd.NA,
+                                    "All Synonyms": ", ".join(current_synonyms) if current_synonyms else pd.NA
+                                }
+                    current_id = None
+                    current_name = None
+                    current_description = None
+                    current_antibiotics = []
+                    current_synonyms = []
+                    in_term = line == "[Term]"
+                elif not in_term:
+                    continue
+                elif line.startswith("id: ARO:"):
+                    current_id = line.split(": ", 1)[1]
+                elif line.startswith("name: "):
+                    current_name = line.split(": ", 1)[1]
+                elif line.startswith("synonym: "):
+                    match = re.search(r'^synonym: "([^"]+)"', line)
+                    if match:
+                        current_synonyms.extend(s.strip() for s in match.group(1).split(","))
+                elif line.startswith("def: "):
+                    current_description = line.split(": ", 1)[1]
+                elif line.startswith("relationship: confers_resistance_to_antibiotic"):
+                    current_antibiotics.append(line.split(": ", 1)[1].split("! ")[-1])
+        return None
 
     def finding_ARG(self, genes_list: List[str], obo_file: str) -> Tuple[List[dict], List[str]]:
         """

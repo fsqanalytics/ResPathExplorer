@@ -28,7 +28,7 @@ class VFDBAnalysis:
             raise ValueError("db_dir must be a non-empty string.")
 
         self.db_dir = db_dir
-        self.fasta_url = "http://www.mgc.ac.cn/VFs/Down/VFDB_setA_pro.fas.gz"
+        self.fasta_url = "https://www.mgc.ac.cn/VFs/Down/VFDB_setA_pro.fas.gz"
         self.xls_url = "https://www.mgc.ac.cn/VFs/Down/VFs.xls.gz"
         self.fasta_path = os.path.join(db_dir, "VFDB_setA_pro.fas.gz")
         self.xls_gz_path = os.path.join(db_dir, "VFs.xls.gz")
@@ -44,7 +44,7 @@ class VFDBAnalysis:
         # Download FASTA
         if not os.path.exists(self.fasta_path):
             print("Downloading FASTA file...")
-            response = requests.get(self.fasta_url)
+            response = requests.get(self.fasta_url, timeout=30)
             response.raise_for_status()
             with open(self.fasta_path, 'wb') as f_out:
                 f_out.write(response.content)
@@ -55,7 +55,8 @@ class VFDBAnalysis:
         # Download and decompress XLS
         if not os.path.exists(self.xls_path):
             print("Downloading XLS file...")
-            with requests.get(self.xls_url, stream=True) as r:
+            with requests.get(self.xls_url, stream=True, timeout=30) as r:
+                r.raise_for_status()
                 with open(self.xls_gz_path, 'wb') as f:
                     shutil.copyfileobj(r.raw, f)
 
@@ -152,25 +153,29 @@ class VFDBAnalysis:
         """
         if self.df_genes is None:
             raise ValueError("Gene data not loaded. Call load_and_process() first.")
-        if not important_genes or not isinstance(important_genes, list):
-            raise ValueError("important_genes must be a non-empty list.")
+        if not isinstance(important_genes, list) or not important_genes or not all(
+                isinstance(gene, str) and gene.strip() for gene in important_genes):
+            raise ValueError("important_genes must be a non-empty list of gene names.")
         if not isinstance(bacteria, str) or not bacteria.strip():
             raise ValueError("bacteria must be a non-empty string.")
 
-        df_result = pd.DataFrame()
-        for gene in important_genes:
-            filtered = self.df_genes[
-                (self.df_genes['Bacteria'].str.contains(bacteria, case=False, na=False)) &
-                (self.df_genes['Gene_Name'].str.lower() == gene.lower())
-            ]
-            df_result = pd.concat([df_result, filtered], ignore_index=True)
-        return df_result
+        gene_names = {gene.strip().casefold() for gene in important_genes}
+        mask = (
+            self.df_genes['Bacteria'].str.contains(bacteria.strip(), case=False, na=False, regex=False)
+            & self.df_genes['Gene_Name'].str.strip().str.casefold().isin(gene_names)
+        )
+        # Keep distinct strain records for provenance, without repeating input genes.
+        return self.df_genes.loc[mask].drop_duplicates().reset_index(drop=True)
 
     def plot_virulence_factors_percentage(self, df: pd.DataFrame,
                                           bacteria_name: str,
                                           show_all_categories: bool = True) -> None:
         """
-        Plots the percentage distribution of virulence factor categories.
+        Plot the distribution of unique gene-category associations across strains.
+
+        Each gene counts once per category when ``Gene_Name`` is available.
+        Without gene names, each input row is an observation. Missing categories
+        are shown as Unclassified; categories outside the standard list remain visible.
         """
         if df is None or df.empty:
             raise ValueError("DataFrame cannot be empty.")
@@ -187,7 +192,19 @@ class VFDBAnalysis:
             'Antimicrobial activity/Competitive advantage'
         ]
 
-        actual_counts = df["Functional category"].value_counts(normalize=True) * 100
+        observations = df.copy()
+        observations["Functional category"] = (
+            observations["Functional category"].fillna("").str.strip().replace("", "Unclassified")
+        )
+        if "Gene_Name" in observations:
+            observations["Gene_Name"] = observations["Gene_Name"].str.strip().str.casefold()
+            named = observations["Gene_Name"].notna() & observations["Gene_Name"].ne("")
+            observations = pd.concat([
+                observations.loc[named].drop_duplicates(["Gene_Name", "Functional category"]),
+                observations.loc[~named]
+            ], ignore_index=True)
+        actual_counts = observations["Functional category"].value_counts(normalize=True) * 100
+        categories += sorted(set(actual_counts.index) - set(categories))
         freq = pd.DataFrame({'Functional category': categories})
         freq["Percentage"] = freq["Functional category"].map(actual_counts).fillna(0)
 
@@ -195,8 +212,9 @@ class VFDBAnalysis:
             freq = freq[freq["Percentage"] > 0].reset_index(drop=True)
 
         plt.figure(figsize=(14, 6))
-        ax = sns.barplot(data=freq, x="Functional category", y="Percentage", palette="tab20")
-        plt.title(f"Relative Frequency of Virulence Factors - {bacteria_name}")
+        ax = sns.barplot(data=freq, x="Functional category", y="Percentage", color="steelblue")
+        plt.title(f"Virulence Gene-Category Distribution - {bacteria_name}")
+        plt.ylabel("Gene-category associations (%)" if "Gene_Name" in df else "Observations (%)")
         plt.xticks(rotation=45, ha='right')
         plt.ylim(0, max(freq["Percentage"].max() + 5, 10))
         plt.tight_layout()

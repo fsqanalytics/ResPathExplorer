@@ -1,4 +1,5 @@
 import pandas as pd
+from html import escape
 
 def save_df_as_html(df: pd.DataFrame, filename: str, title: str = "Table") -> None:
     """
@@ -14,6 +15,7 @@ def save_df_as_html(df: pd.DataFrame, filename: str, title: str = "Table") -> No
     """
     try:
         html_table = df.to_html(index=False, border=1)
+        title = escape(title)
 
         html_content = f"""
         <!DOCTYPE html>
@@ -57,5 +59,6 @@ def save_df_as_html(df: pd.DataFrame, filename: str, title: str = "Table") -> No
         print(f"HTML file saved: {filename}")
     except Exception as e:
         print(f"Error saving HTML: {e}")
+        raise
 
 

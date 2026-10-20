@@ -21,12 +21,17 @@ dependencies = [
   "seaborn>=0.11.0",
   "bioservices>=1.7.13",
   "biopython>=1.78",
-  "gseapy>=0.10.4"
+  "gseapy>=0.10.4",
+  "xlrd>=2.0.1",
+  "openpyxl>=3.0.7"
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=6.2.0"
+]
+notebooks = [
+  "jupyterlab>=3.0"
 ]
 
 [project.urls]
@@ -35,7 +40,7 @@ BugTracker = "https://github.com/lais-carvalho/ResPathExplorer/issues"
 
 
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 
@@ -44,3 +49,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit_tests"]
+python_files = ["test_*.py", "Test*.py"]

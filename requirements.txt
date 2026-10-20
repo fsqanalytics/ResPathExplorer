@@ -6,4 +6,6 @@ seaborn>=0.11.0
 bioservices>=1.7.13
 biopython>=1.78
 gseapy>=0.10.4
+xlrd>=2.0.1
+openpyxl>=3.0.7
 pytest>=6.2.0

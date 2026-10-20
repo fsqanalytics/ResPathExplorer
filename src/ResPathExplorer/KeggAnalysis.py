@@ -1,7 +1,6 @@
 import os
 import re
 import requests
-from .rename_file import rename_file
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,7 +22,8 @@ class KeggAnalysis:
         org (str): KEGG organism code.
         gene_set (Dict[Tuple[str, str], List[str]]): Dictionary of pathways and their associated genes.
         file_name_gmt (str): Path to GMT file.
-        enrichment_results (pd.DataFrame): Full enrichment results.
+        all_enrichment_results (pd.DataFrame): Full enrichment results.
+        enrichment_results (pd.DataFrame): Results passing the adjusted P-value cutoff.
         limited_enrichment_results (pd.DataFrame): Top N filtered enrichment results.
         paths_genes_dict (Dict[str, List[str]]): Dictionary of pathways and enriched genes.
     """
@@ -44,6 +44,10 @@ class KeggAnalysis:
 
         self.file_name_gmt = file_name_gmt
         self.gene_set = {}
+        self.all_enrichment_results = None
+        self.enrichment_results = None
+        self.limited_enrichment_results = None
+        self.paths_genes_dict = {}
 
         if use_existing_gmt:
             if not os.path.exists(file_name_gmt):
@@ -51,8 +55,6 @@ class KeggAnalysis:
             self._load_gmt_file(file_name_gmt)
         else:
             self._create_GMT_file(file_name_gmt)
-
-        self.enrichment_results = None
 
     def _get_organism_prefix(self, organism_name: str) -> str:
         """Find the KEGG code for a given full organism name."""
@@ -87,8 +89,12 @@ class KeggAnalysis:
     def _load_gmt_file(self, file_name: str) -> None:
         """Load pathways and genes from a GMT file into `self.gene_set`."""
         with open(file_name, 'r') as file:
-            for line in file:
+            for line_number, line in enumerate(file, 1):
+                if not line.strip():
+                    continue
                 parts = line.strip().split("\t")
+                if len(parts) < 3 or not parts[0]:
+                    raise ValueError(f"Invalid GMT record on line {line_number} of '{file_name}'.")
                 pathway = parts[0]
                 pathway_name = parts[1]
                 genes = parts[2:]
@@ -130,8 +136,8 @@ class KeggAnalysis:
         if service is None:
             service = KEGG()
         org = org_code or self.org
-        url = f"http://rest.kegg.jp/list/pathway/{org}"
-        response = requests.get(url)
+        url = f"https://rest.kegg.jp/list/pathway/{org}"
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         resp = response.text
 
@@ -155,6 +161,8 @@ class KeggAnalysis:
                     print(f"Pathway {path} has no information in KEGG, it was not added to the gene set: {e}")
                     continue
 
+        if not self.gene_set:
+            raise ValueError(f"No pathways with genes could be loaded for '{org}'.")
         self.save_GeneSet_GMT(output_file, self.gene_set)
         print(f"GMT {output_file} saved with {len(paths_loaded)} pathways")
 
@@ -176,7 +184,7 @@ class KeggAnalysis:
         try:
             with open(gmt_file_name, "w") as f:
                 for (name, description), genes in gene_set_dict.items():
-                    line = f"{name}\t{description}\t" + "\t".join(genes) + "\n"
+                    line = f"{name}\t{description}\t" + "\t".join(sorted(genes)) + "\n"
                     f.write(line)
             print(f"GMT file saved: {gmt_file_name}")
         except Exception as e:
@@ -190,24 +198,39 @@ class KeggAnalysis:
             number_path: int,
             name_results_file: str,
             genes_background: Optional[List[str]] = None) -> None:
-        """Perform pathway enrichment analysis and store results."""
+        """Store enrichment results and write named TSV and PDF reports.
+
+        The TSV contains all pathways returned by GSEApy. ``enrichment_results`` contains
+        significant pathways; ``limited_enrichment_results`` contains the top N.
+        Pathway names come from the GMT descriptions, without extra API calls.
+        """
+        if not isinstance(gene_list, list) or not gene_list or not all(
+                isinstance(gene, str) and gene.strip() for gene in gene_list):
+            raise ValueError("gene_list must be a non-empty list of gene identifiers.")
+        if not 0 < cutoff <= 1:
+            raise ValueError("cutoff must be greater than 0 and at most 1.")
+        if not isinstance(number_path, int) or isinstance(number_path, bool) or number_path < 1:
+            raise ValueError("number_path must be a positive integer.")
+        os.makedirs(name_outdir, exist_ok=True)
         enr = gp.enrich(
             gene_list=gene_list,
             background=genes_background,
             gene_sets=self.file_name_gmt,
-            outdir=name_outdir,
-            cutoff=cutoff
+            outdir=None,
+            cutoff=cutoff,
+            no_plot=True
         )
         results = enr.res2d
+        if results is None or (isinstance(results, list) and not results):
+            results = pd.DataFrame(columns=[
+                "Term", "Overlap", "P-value", "Adjusted P-value", "Genes"
+            ])
+        results = results.copy()
+        names = {key[0]: key[1] for key in getattr(self, "gene_set", {})}
+        results["Pathway name"] = results["Term"].map(names).fillna(results["Term"])
+        self.all_enrichment_results = results
         filtered_results = results[results['Adjusted P-value'] <= cutoff].copy()
-
-        dict_names = {}
-        for t in filtered_results["Term"]:
-            dict_names[t] = self.get_pathway_name(t).split(" -")[0]
-        filtered_res = filtered_results.copy()
-        filtered_res['Pathway name'] = filtered_res['Term'].map(dict_names)
-
-        self.enrichment_results = filtered_res
+        self.enrichment_results = filtered_results
 
         data_frame = self.enrichment_results.sort_values(by='Adjusted P-value', ascending=True, inplace=False)
         data_final = data_frame.head(number_path)
@@ -216,11 +239,15 @@ class KeggAnalysis:
 
         term_genes_dict = data_final.set_index('Term')['Genes'].to_dict()
         for k, vs in term_genes_dict.items():
-            term_genes_dict[k] = [v for v in vs.split(";")]
+            term_genes_dict[k] = [v.strip() for v in vs.split(";") if v.strip()]
         self.paths_genes_dict = term_genes_dict
 
-        rename_file(name_outdir, f"{self.file_name_gmt}.human.enrichr.reports.txt", f"{name_results_file}.txt")
-        rename_file(name_outdir, f"{self.file_name_gmt}.human.enrichr.reports.pdf", f"{name_results_file}.pdf")
+        results.to_csv(os.path.join(name_outdir, f"{name_results_file}.txt"), sep="\t", index=False)
+        fig = self._make_enrichment_figure("Pathway enrichment", "barplot")
+        try:
+            fig.savefig(os.path.join(name_outdir, f"{name_results_file}.pdf"), bbox_inches="tight")
+        finally:
+            plt.close(fig)
 
     def get_pathway_name(self, id_pathway: str) -> str:
         """Fetch the pathway name given a KEGG pathway ID."""
@@ -232,8 +259,10 @@ class KeggAnalysis:
             if l.startswith("NAME"):
                 res = l
         import re
-        name = re.search(r'NAME\s+(.+)', res).group(1)
-        return name
+        match = re.search(r'NAME\s+(.+)', res)
+        if match is None:
+            raise ValueError(f"No pathway name found for '{id_pathway}'.")
+        return match.group(1)
 
     def visualize_enrichment_results(
             self,
@@ -243,49 +272,68 @@ class KeggAnalysis:
             plot_type: str = "barplot"
     ) -> None:
         """Visualize enrichment results using a barplot or dotplot."""
-        if self.limited_enrichment_results is None:
+        fig = self._make_enrichment_figure(plot_title, plot_type)
+        try:
+            os.makedirs(name_outdir, exist_ok=True)
+            plot_path = os.path.join(name_outdir, f"{outplot_file_name}_{plot_type}.png")
+            fig.savefig(plot_path, bbox_inches='tight')
+            plt.show()
+        finally:
+            plt.close(fig)
+
+    def _make_enrichment_figure(self, plot_title: str, plot_type: str):
+        """Build a figure shared by PDF reports and interactive visualizations."""
+        if getattr(self, "limited_enrichment_results", None) is None:
             raise RuntimeError("Run enrichment_analysis() first.")
+        if plot_type not in {"barplot", "dotplot"}:
+            raise ValueError("Invalid plot_type. Use 'barplot' or 'dotplot'.")
 
         data = self.limited_enrichment_results.copy()
         fig, ax = plt.subplots(figsize=(12, 8))
+        if data.empty:
+            ax.text(0.5, 0.5, "No pathways pass the adjusted P-value cutoff.",
+                    ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(plot_title)
+            ax.set_axis_off()
+            return fig
+
+        data["-log10(AdjP)"] = -np.log10(
+            data["Adjusted P-value"].astype(float).clip(lower=np.finfo(float).tiny)
+        )
 
         if plot_type == "barplot":
-            data["-log10(AdjP)"] = -np.log10(data["Adjusted P-value"])
             norm = plt.Normalize(data["-log10(AdjP)"].min(), data["-log10(AdjP)"].max())
             cmap = plt.cm.viridis
 
             bars = ax.barh(data["Pathway name"], data["-log10(AdjP)"], color=cmap(norm(data["-log10(AdjP)"])))
             ax.set_xlabel('-log10(Adjusted P-value)')
             ax.set_title(f'{plot_title} - Barplot')
-            ax.invert_yaxis()
+            ax.yaxis.set_inverted(True)
 
             sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
             plt.colorbar(sm, ax=ax, label='-log10(Adjusted P-value)')
 
         elif plot_type == "dotplot":
-            data["-log10(AdjP)"] = -np.log10(data["Adjusted P-value"])
+            data["Matched genes"] = pd.to_numeric(
+                data["Overlap"].astype(str).str.split("/", n=1).str[0]
+            )
             sns.scatterplot(
                 x="-log10(AdjP)",
                 y="Pathway name",
-                size="Overlap",
+                size="Matched genes",
                 hue="-log10(AdjP)",
                 data=data,
                 sizes=(50, 300),
                 palette="viridis",
-                legend=None,
+                legend="brief",
                 ax=ax
             )
             ax.set_title(f'{plot_title} - Dotplot')
             ax.set_xlabel('-log10(Adjusted P-value)')
-            ax.invert_yaxis()
+            ax.yaxis.set_inverted(True)
 
-        else:
-            raise ValueError("Invalid plot_type. Use 'barplot' or 'dotplot'.")
-
-        plt.tight_layout()
-        plot_path = os.path.join(name_outdir, f"{outplot_file_name}_{plot_type}.png")
-        plt.savefig(plot_path, bbox_inches='tight')
-        plt.show()
+        fig.tight_layout()
+        return fig
 
     def search_gene_path(
             self,
@@ -299,7 +347,11 @@ class KeggAnalysis:
         if search_in_gene_set:
             return [k[0] for k, genes in self.gene_set.items() if gene_id in genes]
         elif data is not None:
-            return data[data["Genes"].str.contains(gene_id)]["Term"].tolist()
+            mask = data["Genes"].map(
+                lambda value: isinstance(value, str)
+                and gene_id in {gene.strip() for gene in value.split(";")}
+            )
+            return data.loc[mask, "Term"].tolist()
         else:
             raise ValueError("Either 'data' must be provided or 'search_in_gene_set' must be True.")
 

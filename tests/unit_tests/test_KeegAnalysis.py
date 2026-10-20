@@ -13,9 +13,10 @@ class TestKeggAnalysis:
         with pytest.raises(ValueError):
             KeggAnalysis("hsa", "")
 
+    @patch.object(KeggAnalysis, "_get_organism_name", return_value="Homo sapiens (human)")
     @patch("os.path.exists", return_value=True)
     @patch("src.ResPathExplorer.KeggAnalysis.KeggAnalysis._load_gmt_file")
-    def test_init_loads_existing_gmt(self, mock_load_gmt, mock_exists):
+    def test_init_loads_existing_gmt(self, mock_load_gmt, mock_exists, mock_name):
         ka = KeggAnalysis("hsa", "file.gmt", use_existing_gmt=True)
         mock_load_gmt.assert_called_once_with("file.gmt")
         assert ka.file_name_gmt == "file.gmt"
@@ -120,7 +121,7 @@ class TestKeggAnalysis:
         fake_response.raise_for_status = lambda: None
         fake_response.text = "path1\tDescription1\npath2\tDescription2\n"
 
-        monkeypatch.setattr("requests.get", lambda url: fake_response)
+        monkeypatch.setattr("requests.get", lambda url, **kwargs: fake_response)
 
         # Mock dos métodos do KeggAnalysis usados dentro de _create_GMT_file
         monkeypatch.setattr(ka, "get_kgml", lambda path, service=None: """
@@ -146,7 +147,7 @@ class TestKeggAnalysis:
         output_file = tmp_path / "output.gmt"
 
         # Chamar o método que será testado
-        ka._create_GMT_file(str(output_file), org_code="eco")
+        ka._create_GMT_file(str(output_file), org_code="eco", service=MagicMock())
 
         # Assertivas para garantir que o método funcionou como esperado
         assert called['file'] == str(output_file)
@@ -194,8 +195,6 @@ class TestKeggAnalysis:
 
         monkeypatch.setattr("src.ResPathExplorer.KeggAnalysis.gp.enrich", lambda **kwargs: mock_enrich)
 
-        monkeypatch.setattr("src.ResPathExplorer.KeggAnalysis.rename_file", lambda a, b, c: None)
-
         ka.enrichment_analysis(
             gene_list=["gene1", "gene2", "gene3"],
             cutoff=0.05,
@@ -210,6 +209,8 @@ class TestKeggAnalysis:
         assert len(ka.limited_enrichment_results) == 2
         assert "path1" in ka.paths_genes_dict
         assert ka.paths_genes_dict["path1"] == ['gene1', 'gene2']
+        assert (tmp_path / "results.txt").exists()
+        assert (tmp_path / "results.pdf").exists()
 
     def test_get_pathway_name(self, monkeypatch):
         ka = KeggAnalysis.__new__(KeggAnalysis)
