@@ -1,0 +1,46 @@
+[project]
+name = "ResPathExplorer"
+version = "0.1.0"
+description = "Python library for functional enrichment analysis"
+authors = [
+  { name = "Laís Carvalho", email = "laiscarvalho@ipb.pt" }
+]
+readme = "README.md"
+requires-python = ">=3.7"
+keywords = ["bioinformatics", "pathway", "enrichment", "analysis"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+
+dependencies = [
+  "pandas>=1.3.0",
+  "numpy>=1.21.0",
+  "requests>=2.25.0",
+  "matplotlib>=3.4.0",
+  "seaborn>=0.11.0",
+  "bioservices>=1.7.13",
+  "biopython>=1.78",
+  "gseapy>=0.10.4"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=6.2.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/lais-carvalho/ResPathExplorer"
+BugTracker = "https://github.com/lais-carvalho/ResPathExplorer/issues"
+
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]

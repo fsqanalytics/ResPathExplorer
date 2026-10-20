@@ -1,41 +1,69 @@
-# ResPathExplorer
+# 🧬 ResPathExplorer
 
-ResPathExplorer is a Python-based library designed to streamline transcriptomic data analysis by integrating the Kyoto Encyclopedia of Genes and Genomes (KEGG) and the Comprehensive Antibiotic Resistance Database (CARD). It enables the identification and visualization of enriched metabolic pathways and antibiotic resistance gene mapping.
+A modular Python library for functional analysis of microbial genes using curated bioinformatics databases. This tool supports gene mapping to KEGG pathways, resistance profiles via CARD, and virulence factors through VFDB — providing a comprehensive view of microbial functionality in contexts such as immunology, food safety, and antimicrobial resistance.
 
-# Features
+## Key Features
 
-- Interpret transcriptomic data.
+- Functional Mapping: Annotate genes using KEGG, CARD, and VFDB.
 
-- Identify metabolic pathway enrichment.
+- Enrichment Analysis: Perform pathway enrichment from gene lists.
 
-- Map prevalence of antibiotic resistance genes.
+- Pathway-Level Analysis: Visualize gene distribution across biological pathways.
 
-- Integrated visualization with KEGG and CARD databases.
+- Resistance & Virulence Profiling: Contextualize resistance and virulence genes functionally.
 
-# Installation
+- Custom Data Input: Supports gene lists and annotation tables in standard formats.
 
-pip install respathexplorer
+- Extensible Pipeline: Modular design for easy integration into broader omics workflows.
 
-# Usage
+- Visualization Tools: Built-in plots for resistance profiles, virulence categories, enrichment results, and KEGG pathways.
 
-import respathexplorer as rpe
+## Examples
+You can find full working examples in the `Examples/` folder:
 
-## Analyze transcriptomic data
-data = rpe.load_data('your_data.csv')
+#### `Foodborne bacteria/`:
 
-## Perform pathway analysis
-pathways = rpe.analyze_pathways(data)
+Transcriptome Analysis of *Listeria monocytogenes* Exposed to Beef Fat Reveals Antimicrobial and Pathogenicity Attenuation Mechanisms
 
-## Visualize results
-rpe.visualize_pathways(pathways)
+doi: https://doi.org/10.1128/AEM.03027-20
 
-# Applications
+- The example was done just for C18:2n-6
 
-- Antimicrobial resistance monitoring
+`pepare_data.ipynb`: Preparing data for analysis.
 
-- Food safety and sustainability research
+`Analysis.ipynb`: ResPathExplorer aplication.
 
-- Pathogenic bacteria characterization in agro-food systems
+## Structure
+```text
+📁 ResPathExplorer/
+├── 📁 src/ResPathExplorer/
+│   ├── __init__.py
+│   ├── CARDAnalysis.py
+│   ├── KeggAnalysis.py
+│   ├── URL_pathway.py
+│   ├── VFDBAnalysis.py
+│   ├── mapper_KeggFunctions.py
+│   ├── rename_file.py
+│   ├── save_df_as_html.py
+│   └── validate_color_code.py
+├── 📁 Examples/
+│   ├── 📁 Foodborne bacteria/
+├── 📁 tests/
+```
+
+## 🛠 Installation
+
+To install the library directly from GitHub:
+
+```bash
+pip install git+https://github.com/lais-carvalho/ResPathExplorer.git
+```
+
+## Acknowledgements
+
+- European Food Safety Authority (EFSA) – support via the “Pathogens-in-Foods Database” project.
+
+- Centro de Investigação da Montanha (CIMO), Portugal.
 
 # Authors
 
